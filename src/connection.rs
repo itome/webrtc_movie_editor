@@ -2,9 +2,7 @@ use std::marker::Send;
 use std::sync::Arc;
 
 use anyhow::Result;
-use gstreamer::{prelude::*, Bin, Element, ElementFactory, GhostPad};
-use gstreamer_app::{AppSink, AppSinkCallbacks};
-use gstreamer_editing_services::{traits::GESPipelineExt, Pipeline};
+use uuid::Uuid;
 use webrtc::{
     api::{media_engine::MIME_TYPE_VP8, API},
     ice_transport::ice_server::RTCIceServer,
@@ -19,17 +17,13 @@ use webrtc::{
 };
 
 pub struct Connection {
-    pipeline: Arc<Pipeline>,
+    pub id: String,
     peer_connection: Arc<RTCPeerConnection>,
     video_track: Arc<TrackLocalStaticRTP>,
 }
 
 impl Connection {
     pub async fn new(api: Arc<API>) -> Result<Self> {
-        let pipeline = Arc::new(Pipeline::new());
-        let (video_sink, appsink) = Self::create_app_sink()?;
-        pipeline.preview_set_video_sink(Some(&video_sink));
-
         let config = RTCConfiguration {
             ice_servers: vec![RTCIceServer {
                 urls: vec!["stun:stun.l.google.com:19302".to_owned()],
@@ -53,31 +47,8 @@ impl Connection {
             .add_track(Arc::clone(&video_track) as Arc<dyn TrackLocal + Send + Sync>)
             .await?;
 
-        let track = video_track.clone();
-        appsink.set_callbacks(
-            AppSinkCallbacks::builder()
-                .new_sample(
-                    move |appsink| -> Result<gstreamer::FlowSuccess, gstreamer::FlowError> {
-                        if let Ok(sample) = appsink.pull_sample() {
-                            if let Some(buffer) = sample.buffer() {
-                                if let Ok(map) = buffer.map_readable() {
-                                    let data = map.as_slice();
-                                    let _ = tokio::runtime::Builder::new_multi_thread()
-                                        .enable_all()
-                                        .build()
-                                        .unwrap()
-                                        .block_on(async { track.write(data).await });
-                                }
-                            }
-                        }
-                        Ok(gstreamer::FlowSuccess::Ok)
-                    },
-                )
-                .build(),
-        );
-
         Ok(Connection {
-            pipeline,
+            id: Uuid::new_v4().to_string(),
             peer_connection,
             video_track,
         })
@@ -97,24 +68,8 @@ impl Connection {
         }
     }
 
-    fn create_app_sink() -> Result<(Element, AppSink)> {
-        let sink = AppSink::builder().build();
-        let enc = ElementFactory::make("vp8enc").build()?;
-        enc.set_property("deadline", 1i64);
-        enc.set_property("target-bitrate", 10 * 1024 * 10000);
-        let rtpvp8pay = ElementFactory::make("rtpvp8pay").build()?;
-
-        let bin = Bin::builder().build();
-        bin.add_many(&[&enc, &rtpvp8pay, sink.upcast_ref()])?;
-        Element::link_many(&[&enc, &rtpvp8pay, sink.upcast_ref()])?;
-
-        let pad = enc
-            .static_pad("sink")
-            .expect("Failed to get a static pad from equalizer.");
-        let ghost_pad = GhostPad::with_target(Some("sink"), &pad)?;
-        ghost_pad.set_active(true)?;
-        bin.add_pad(&ghost_pad)?;
-
-        Ok((bin.upcast(), sink))
+    pub async fn write(&self, data: &[u8]) -> Result<()> {
+        self.video_track.write(data).await?;
+        Ok(())
     }
 }
