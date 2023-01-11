@@ -1,6 +1,7 @@
 mod connection;
 mod connection_pool;
-mod project;
+mod timeline;
+mod timeline_manager;
 
 use std::{marker::Send, net::SocketAddr, sync::Arc, thread};
 
@@ -10,22 +11,20 @@ use axum::{
 };
 use axum_macros::debug_handler;
 use connection_pool::ConnectionPool;
-use project::{EditorCommand, ProjectManager};
 use serde_json::json;
+use timeline_manager::{Command, TimelineManager};
 use tokio::sync::mpsc::{self, Sender};
 use webrtc::peer_connection::sdp::session_description::RTCSessionDescription;
 
 #[derive(Clone)]
 struct AppContext {
     connection_pool: Arc<ConnectionPool>,
-    tx: Arc<Sender<EditorCommand>>,
+    tx: Arc<Sender<Command>>,
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    tracing_subscriber::fmt::init();
-
-    let (tx, mut rx) = mpsc::channel::<EditorCommand>(100);
+    let (tx, mut rx) = mpsc::channel::<Command>(100);
     let tx = Arc::new(tx);
     let connection_pool = Arc::new(ConnectionPool::new()?);
     let context = AppContext {
@@ -38,9 +37,11 @@ async fn main() -> Result<()> {
         .layer(Extension(context));
 
     thread::spawn(move || {
-        let mut project_manager = ProjectManager::new();
+        gstreamer::init().unwrap();
+        gstreamer_editing_services::init().unwrap();
+        let mut manager = TimelineManager::new();
         while let Some(command) = rx.blocking_recv() {
-            project_manager.handle_command(command).unwrap();
+            manager.handle_command(command).unwrap();
         }
     });
 
@@ -53,11 +54,6 @@ async fn main() -> Result<()> {
             .unwrap();
     })];
 
-    tx.send(EditorCommand::AddUriClip(
-        "file:///Users/itome/Downloads/bun33s.mp4".to_string(),
-    ))
-    .await?;
-
     futures::future::join_all(handles).await;
 
     Ok(())
@@ -68,7 +64,8 @@ async fn create_user(
     Extension(context): Extension<AppContext>,
     Json(payload): Json<RTCSessionDescription>,
 ) -> impl IntoResponse {
-    let (tx, rx) = tokio::sync::mpsc::channel::<Vec<u8>>(100);
+    let (video_tx, video_rx) = tokio::sync::mpsc::channel::<Vec<u8>>(100);
+    let (audio_tx, audio_rx) = tokio::sync::mpsc::channel::<Vec<u8>>(100);
     let (id, description) = context
         .connection_pool
         .create_connection(payload)
@@ -76,14 +73,19 @@ async fn create_user(
         .unwrap();
     context
         .connection_pool
-        .handle_sample(id.clone(), rx)
+        .set_video_buffer_handler(id.clone(), video_rx)
+        .await
+        .unwrap();
+    context
+        .connection_pool
+        .set_audio_buffer_handler(id.clone(), audio_rx)
         .await
         .unwrap();
     context
         .tx
-        .send(EditorCommand::AddPipeline(id.clone(), tx))
+        .send(Command::AddPipeline(id.clone(), video_tx, audio_tx))
         .await
         .unwrap();
-    context.tx.send(EditorCommand::Play(id)).await.unwrap();
+
     (StatusCode::CREATED, Json(json!(description)))
 }

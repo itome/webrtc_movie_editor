@@ -49,7 +49,11 @@ impl ConnectionPool {
         Ok((id, description))
     }
 
-    pub async fn handle_sample(&self, id: String, mut rx: Receiver<Vec<u8>>) -> Result<()> {
+    pub async fn set_video_buffer_handler(
+        &self,
+        id: String,
+        mut rx: Receiver<Vec<u8>>,
+    ) -> Result<()> {
         let connection = self
             .connections
             .lock()
@@ -60,7 +64,34 @@ impl ConnectionPool {
             .clone();
         tokio::spawn(async move {
             while let Some(message) = rx.recv().await {
-                connection.write(message.as_ref()).await.unwrap();
+                connection
+                    .write_video_buffer(message.as_ref())
+                    .await
+                    .unwrap();
+            }
+        });
+        Ok(())
+    }
+
+    pub async fn set_audio_buffer_handler(
+        &self,
+        id: String,
+        mut rx: Receiver<Vec<u8>>,
+    ) -> Result<()> {
+        let connection = self
+            .connections
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|c| c.id == id)
+            .unwrap()
+            .clone();
+        tokio::spawn(async move {
+            while let Some(message) = rx.recv().await {
+                connection
+                    .write_audio_buffer(message.as_ref())
+                    .await
+                    .unwrap();
             }
         });
         Ok(())

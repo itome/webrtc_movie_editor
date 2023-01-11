@@ -4,7 +4,10 @@ use std::sync::Arc;
 use anyhow::Result;
 use uuid::Uuid;
 use webrtc::{
-    api::{media_engine::MIME_TYPE_VP8, API},
+    api::{
+        media_engine::{MIME_TYPE_OPUS, MIME_TYPE_VP8},
+        API,
+    },
     ice_transport::ice_server::RTCIceServer,
     peer_connection::{
         configuration::RTCConfiguration, sdp::session_description::RTCSessionDescription,
@@ -20,6 +23,7 @@ pub struct Connection {
     pub id: String,
     peer_connection: Arc<RTCPeerConnection>,
     video_track: Arc<TrackLocalStaticRTP>,
+    audio_track: Arc<TrackLocalStaticRTP>,
 }
 
 impl Connection {
@@ -43,14 +47,26 @@ impl Connection {
             "webrtc-rs".to_owned(),
         ));
 
+        let audio_track = Arc::new(TrackLocalStaticRTP::new(
+            RTCRtpCodecCapability {
+                mime_type: MIME_TYPE_OPUS.to_owned(),
+                ..Default::default()
+            },
+            "audio".to_owned(),
+            "webrtc-rs".to_owned(),
+        ));
         peer_connection
             .add_track(Arc::clone(&video_track) as Arc<dyn TrackLocal + Send + Sync>)
+            .await?;
+        peer_connection
+            .add_track(Arc::clone(&audio_track) as Arc<dyn TrackLocal + Send + Sync>)
             .await?;
 
         Ok(Connection {
             id: Uuid::new_v4().to_string(),
             peer_connection,
             video_track,
+            audio_track,
         })
     }
 
@@ -68,8 +84,13 @@ impl Connection {
         }
     }
 
-    pub async fn write(&self, data: &[u8]) -> Result<()> {
+    pub async fn write_video_buffer(&self, data: &[u8]) -> Result<()> {
         self.video_track.write(data).await?;
+        Ok(())
+    }
+
+    pub async fn write_audio_buffer(&self, data: &[u8]) -> Result<()> {
+        self.audio_track.write(data).await?;
         Ok(())
     }
 }
