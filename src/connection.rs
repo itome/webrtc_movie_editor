@@ -2,6 +2,9 @@ use std::marker::Send;
 use std::sync::Arc;
 
 use anyhow::Result;
+use serde::{Deserialize, Serialize};
+use serde_json::{Map, Value};
+use tokio::sync::mpsc::Sender;
 use uuid::Uuid;
 use webrtc::{
     api::{
@@ -19,6 +22,14 @@ use webrtc::{
     },
 };
 
+use crate::timeline_manager::Command;
+
+#[derive(Serialize, Deserialize)]
+struct CommandJson {
+    name: String,
+    payload: Option<Map<String, Value>>,
+}
+
 pub struct Connection {
     pub id: String,
     peer_connection: Arc<RTCPeerConnection>,
@@ -27,7 +38,8 @@ pub struct Connection {
 }
 
 impl Connection {
-    pub async fn new(api: Arc<API>) -> Result<Self> {
+    pub async fn new(api: Arc<API>, tx: Arc<Sender<Command>>) -> Result<Self> {
+        let id = Uuid::new_v4().to_string();
         let config = RTCConfiguration {
             ice_servers: vec![RTCIceServer {
                 urls: vec!["stun:stun.l.google.com:19302".to_owned()],
@@ -62,8 +74,43 @@ impl Connection {
             .add_track(Arc::clone(&audio_track) as Arc<dyn TrackLocal + Send + Sync>)
             .await?;
 
+        let id2 = id.clone();
+        peer_connection.on_data_channel(Box::new(move |data_channel| {
+            let id2 = id2.clone();
+            let tx = tx.clone();
+            Box::pin(async move {
+                data_channel.on_open(Box::new(move || {
+                    Box::pin(async move {
+                        println!("data channel open");
+                    })
+                }));
+                data_channel.on_message(Box::new(move |msg| {
+                    let id2 = id2.clone();
+                    let tx = tx.clone();
+                    let msg = String::from_utf8(msg.data.to_vec()).unwrap();
+                    let cmd: CommandJson = serde_json::from_str(msg.as_str()).unwrap();
+                    let command = match cmd.name.as_str() {
+                        "play" => Some(Command::Play(id2)),
+                        "pause" => Some(Command::Pause(id2)),
+                        "add_uri_clip" => {
+                            let map = cmd.payload.unwrap();
+                            let uri = map.get("uri").unwrap().as_str().unwrap();
+                            Some(Command::AddUriClip(String::from(uri.clone())))
+                        }
+                        _ => None,
+                    };
+                    Box::pin(async move {
+                        match command {
+                            Some(command) => tx.send(command).await.unwrap(),
+                            None => {}
+                        }
+                    })
+                }));
+            })
+        }));
+
         Ok(Connection {
-            id: Uuid::new_v4().to_string(),
+            id,
             peer_connection,
             video_track,
             audio_track,

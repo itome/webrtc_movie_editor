@@ -1,7 +1,7 @@
 use std::sync::{Arc, Mutex};
 
 use anyhow::Result;
-use tokio::sync::mpsc::Receiver;
+use tokio::sync::mpsc::{Receiver, Sender};
 use webrtc::{
     api::{
         interceptor_registry::register_default_interceptors, media_engine::MediaEngine, APIBuilder,
@@ -11,15 +11,16 @@ use webrtc::{
     peer_connection::sdp::session_description::RTCSessionDescription,
 };
 
-use crate::connection::Connection;
+use crate::{connection::Connection, timeline_manager::Command};
 
 pub struct ConnectionPool {
     connections: Arc<Mutex<Vec<Arc<Connection>>>>,
     api: Arc<API>,
+    tx: Arc<Sender<Command>>,
 }
 
 impl ConnectionPool {
-    pub fn new() -> Result<Self> {
+    pub fn new(tx: Arc<Sender<Command>>) -> Result<Self> {
         let mut media_engine = MediaEngine::default();
         media_engine.register_default_codecs()?;
         let mut registry = Registry::new();
@@ -33,6 +34,7 @@ impl ConnectionPool {
         );
 
         Ok(ConnectionPool {
+            tx,
             api,
             connections: Arc::new(Mutex::new(vec![])),
         })
@@ -42,7 +44,7 @@ impl ConnectionPool {
         &self,
         offer: RTCSessionDescription,
     ) -> Result<(String, RTCSessionDescription)> {
-        let connection = Connection::new(self.api.clone()).await?;
+        let connection = Connection::new(self.api.clone(), self.tx.clone()).await?;
         let description = connection.connect(offer).await?;
         let id = connection.id.clone();
         self.connections.lock().unwrap().push(Arc::new(connection));

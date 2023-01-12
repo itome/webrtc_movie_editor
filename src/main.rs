@@ -26,7 +26,7 @@ struct AppContext {
 async fn main() -> Result<()> {
     let (tx, mut rx) = mpsc::channel::<Command>(100);
     let tx = Arc::new(tx);
-    let connection_pool = Arc::new(ConnectionPool::new()?);
+    let connection_pool = Arc::new(ConnectionPool::new(tx.clone())?);
     let context = AppContext {
         connection_pool: connection_pool.clone(),
         tx: tx.clone(),
