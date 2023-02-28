@@ -100,13 +100,10 @@ impl Timeline {
                     if let Ok(sample) = appsink.pull_sample() {
                         if let Some(buffer) = sample.buffer() {
                             if let Ok(map) = buffer.map_readable() {
-                                let _ = tokio::runtime::Builder::new_multi_thread()
-                                    .enable_all()
-                                    .build()
-                                    .unwrap()
-                                    .block_on(async {
-                                        tx.send(map.as_slice().to_vec()).await.unwrap();
-                                    });
+                                let rt = tokio::runtime::Runtime::new().unwrap();
+                                rt.block_on(async {
+                                    tx.send(map.as_slice().to_vec()).await.unwrap();
+                                });
                             }
                         }
                     }

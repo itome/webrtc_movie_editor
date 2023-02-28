@@ -7,13 +7,18 @@ use std::{marker::Send, net::SocketAddr, sync::Arc, thread};
 
 use anyhow::Result;
 use axum::{
-    extract::Extension, http::StatusCode, response::IntoResponse, routing::post, Json, Router,
+    extract::Extension,
+    http::{Method, StatusCode},
+    response::IntoResponse,
+    routing::post,
+    Json, Router,
 };
 use axum_macros::debug_handler;
 use connection_pool::ConnectionPool;
 use serde_json::json;
 use timeline_manager::{Command, TimelineManager};
 use tokio::sync::mpsc::{self, Sender};
+use tower_http::cors::{Any, CorsLayer};
 use webrtc::peer_connection::sdp::session_description::RTCSessionDescription;
 
 #[derive(Clone)]
@@ -34,7 +39,12 @@ async fn main() -> Result<()> {
 
     let app = Router::new()
         .route("/signaling", post(create_user))
-        .layer(Extension(context));
+        .layer(Extension(context))
+        .layer(
+            CorsLayer::new()
+                .allow_methods([Method::GET, Method::POST])
+                .allow_origin(Any),
+        );
 
     thread::spawn(move || {
         gstreamer::init().unwrap();
