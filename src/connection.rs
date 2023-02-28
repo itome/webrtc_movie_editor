@@ -26,7 +26,7 @@ use crate::timeline_manager::Command;
 
 #[derive(Serialize, Deserialize)]
 struct CommandJson {
-    name: String,
+    command: String,
     payload: Option<Map<String, Value>>,
 }
 
@@ -79,17 +79,13 @@ impl Connection {
             let id2 = id2.clone();
             let tx = tx.clone();
             Box::pin(async move {
-                data_channel.on_open(Box::new(move || {
-                    Box::pin(async move {
-                        println!("data channel open");
-                    })
-                }));
                 data_channel.on_message(Box::new(move |msg| {
                     let id2 = id2.clone();
                     let tx = tx.clone();
                     let msg = String::from_utf8(msg.data.to_vec()).unwrap();
+                    println!("{}", msg);
                     let cmd: CommandJson = serde_json::from_str(msg.as_str()).unwrap();
-                    let command = match cmd.name.as_str() {
+                    let command = match cmd.command.as_str() {
                         "play" => Some(Command::Play(id2)),
                         "pause" => Some(Command::Pause(id2)),
                         "add_uri_clip" => {

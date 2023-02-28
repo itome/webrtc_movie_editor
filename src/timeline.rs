@@ -22,12 +22,7 @@ impl Timeline {
         Self::set_callback(video_app_sink, video_tx);
         Self::set_callback(audio_app_sink, audio_tx);
 
-        let this = Self { timeline, pipeline };
-        this.add_uri_clip("file:///Users/itome/Downloads/earth.mp4".to_string())?;
-        this.play()?;
-        Ok(this)
-        // FIXME(itome): Use following
-        // Ok(Self { timeline, pipeline };)
+        Ok(Self { timeline, pipeline })
     }
 
     pub fn add_uri_clip(&self, uri: String) -> Result<()> {
